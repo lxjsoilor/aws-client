@@ -48,6 +48,7 @@ class AWSClient {
         this.options = options;
         this.client = null;
         this.Bucket = options.Bucket;
+        this.uploadStatusMap = new Map()
         this.initClient(options);
     }
     initClient({ accessKeyId, secretAccessKey, endpoint, signatureVersion, apiVersion, s3ForcePathStyle }) {
@@ -128,6 +129,9 @@ class AWSClient {
                                 MultipartUpload
                             }
                         })
+                        if (this.uploadStatusMap.get(file) === 'pause') {
+                            return;
+                        }
                         await this.uploadPart({
                             Body: chunks[PartNumber],
                             PartNumber: PartNumber + 1,
@@ -139,6 +143,9 @@ class AWSClient {
                             file
                         })
                     } catch (e) { console.error(e) }
+                }
+                if (this.uploadStatusMap.get(file) === 'pause') {
+                    reject('pause');
                 }
                 resolve(data);
             })
@@ -173,7 +180,21 @@ class AWSClient {
         })
     }
     // 分片上传
-    async multipartUpload({ file, size, progress, breakpoint }) {
+    multipartUpload({ file, size, progress = () => { }, breakpoint }) {
+        return {
+            run: async () => await this.multipartUploadRun({ file, size, progress, breakpoint }),
+            pause: () => this.multipartUploadPause(file),
+            reRun: async () => await this.multipartUploadReRun({ file, size, progress })
+        }
+    }
+    multipartUploadPause(file) {
+        this.uploadStatusMap.set(file, 'pause');
+    }
+    async multipartUploadReRun({ file, size, progress }) {
+        this.uploadStatusMap.set(file, 'run');
+        return this.multipartUploadRun({ file, size, progress, breakpoint: (async () => await true) });
+    }
+    async multipartUploadRun({ file, size, progress, breakpoint }) {
         const chunks = this.createFileChunk(file, size);
         const uploadStatus = getUploadStatus(file.name);
         let useCache = false;
